@@ -1,130 +1,149 @@
 <?php
-// chat_api.php — JSON endpoint for the BlueGate panel (English code & messages)
+// chat_api.php — Minimal backend for Azure OpenAI Assistants on Azure (2024-07-01-preview).
+// - Keeps a thread in PHP session
+// - Adds user message, runs the assistant, polls until completed
+// - Returns JSON: { ok, reply, thread_id } so the widget can display the answer
 
-header('Content-Type: application/json; charset=utf-8');
 session_start();
+header('Content-Type: application/json');
 
-$endpoint  = rtrim(getenv('AZURE_ENDPOINT') ?: '', '/');   // e.g. https://YOUR-RESOURCE.openai.azure.com
-$apiKey    = getenv('AZURE_API_KEY') ?: '';
-$assistant = getenv('ASSISTANT_ID') ?: '';
-$apiVer    = '2024-07-01-preview';
-
-if (!$endpoint || !$apiKey || !$assistant) {
-  http_response_code(500);
-  echo json_encode(['ok' => false, 'error' => 'Missing configuration: AZURE_ENDPOINT, AZURE_API_KEY, ASSISTANT_ID.']);
+function json_fail($msg, $code = 500) {
+  http_response_code($code);
+  echo json_encode(['ok' => false, 'error' => $msg], JSON_UNESCAPED_UNICODE);
   exit;
 }
 
-// Accept JSON or x-www-form-urlencoded
-$raw = file_get_contents('php://input');
-$payload = $raw ? json_decode($raw, true) : null;
-$message = $payload['message'] ?? ($_POST['message'] ?? '');
-$message = is_string($message) ? trim($message) : '';
-if ($message === '') {
-  http_response_code(400);
-  echo json_encode(['ok' => false, 'error' => 'Empty message.']);
+// Reset thread if asked
+if (isset($_GET['reset']) || isset($_POST['reset'])) {
+  unset($_SESSION['thread_id']);
+  echo json_encode(['ok' => true, 'reset' => true]);
   exit;
 }
 
-function azureRequest(string $method, string $url, array $body = null, string $apiKey = '') {
+// Read env vars
+$API_KEY      = getenv('AZURE_API_KEY');
+$ASSISTANT_ID = getenv('ASSISTANT_ID');
+$ENDPOINT     = rtrim(getenv('AZURE_ENDPOINT') ?: '', '/');
+
+if (!$API_KEY || !$ASSISTANT_ID || !$ENDPOINT) {
+  json_fail('Missing AZURE_API_KEY / AZURE_ENDPOINT / ASSISTANT_ID environment variables.', 500);
+}
+
+// API base (Azure)
+$API_BASE = $ENDPOINT . '/openai/assistants/2024-07-01-preview';
+
+function curl_json($url, $method = 'GET', $payload = null, $headers = []) {
   $ch = curl_init($url);
-  $headers = [
-    'Accept: application/json',
-    'Content-Type: application/json',
-    'api-key: ' . $apiKey,
-    'Expect:' // avoid 100-continue issues on some proxies
-  ];
-  curl_setopt_array($ch, [
-    CURLOPT_CUSTOMREQUEST  => $method,
-    CURLOPT_HTTPHEADER     => $headers,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_TIMEOUT        => 60,
-    CURLOPT_HTTP_VERSION   => CURL_HTTP_VERSION_1_1
-  ]);
-  if ($body !== null) {
-    $json = json_encode($body, JSON_UNESCAPED_SLASHES);
-    if ($json === '' || $json === false) $json = '{}';
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+  curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+  curl_setopt($ch, CURLOPT_TIMEOUT, 65);
+  if ($payload !== null) {
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    $headers[] = 'Content-Type: application/json';
   }
-  $resp = curl_exec($ch);
-  $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-  $err  = curl_error($ch);
+  curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+
+  $body = curl_exec($ch);
+  $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+  if ($body === false) {
+    $err = curl_error($ch);
+    curl_close($ch);
+    return [null, $status ?: 0, $err];
+  }
   curl_close($ch);
-  return [$code, $resp, $err];
+  $decoded = json_decode($body, true);
+  return [$decoded, $status, null];
 }
 
-try {
-  // Create (or reuse) a thread per session
-  if (empty($_SESSION['thread_id'])) {
-    $url = "{$endpoint}/openai/assistants/{$apiVer}/threads?api-version={$apiVer}";
-    [$code, $resp] = azureRequest('POST', $url, (object)[], $apiKey);
-    if ($code < 200 || $code >= 300) {
-      throw new Exception("Create thread failed ({$code}): {$resp}");
-    }
-    $data = json_decode($resp, true);
-    $_SESSION['thread_id'] = $data['id'] ?? null;
-    if (!$_SESSION['thread_id']) {
-      throw new Exception('Thread id missing from response.');
-    }
-  }
-  $threadId = $_SESSION['thread_id'];
+// Read message
+$raw = file_get_contents('php://input');
+$data = json_decode($raw, true);
+$message = $data['message'] ?? null;
+if (!$message) {
+  json_fail('No message provided', 400);
+}
 
-  // Add user message
-  $url = "{$endpoint}/openai/assistants/{$apiVer}/threads/{$threadId}/messages?api-version={$apiVer}";
-  $body = [
-    'role'    => 'user',
-    'content' => [['type' => 'text', 'text' => $message]],
-  ];
-  [$code, $resp] = azureRequest('POST', $url, $body, $apiKey);
-  if ($code < 200 || $code >= 300) {
-    throw new Exception("Add message failed ({$code}): {$resp}");
-  }
+// Ensure a thread exists
+$headers = [
+  'api-key: ' . $API_KEY
+];
 
-  // Create run
-  $url  = "{$endpoint}/openai/assistants/{$apiVer}/threads/{$threadId}/runs?api-version={$apiVer}";
-  $body = ['assistant_id' => $assistant];
-  [$code, $resp] = azureRequest('POST', $url, $body, $apiKey);
-  if ($code < 200 || $code >= 300) {
-    throw new Exception("Create run failed ({$code}): {$resp}");
+$threadId = $_SESSION['thread_id'] ?? null;
+if (!$threadId) {
+  [$res, $code, $err] = curl_json($API_BASE . '/threads', 'POST', (object)[], $headers);
+  if ($code >= 400 || !$res || empty($res['id'])) {
+    json_fail('Thread create error: ' . ($err ?: json_encode($res)), $code ?: 500);
   }
-  $run = json_decode($resp, true);
-  $runId = $run['id'] ?? null;
-  if (!$runId) throw new Exception('Run id missing from response.');
+  $threadId = $res['id'];
+  $_SESSION['thread_id'] = $threadId;
+}
 
-  // Poll until completed (timeout ~60s)
-  $deadline = time() + 60;
-  $status = $run['status'] ?? 'queued';
-  while (time() < $deadline && in_array($status, ['queued','in_progress'])) {
-    usleep(600000);
-    $url = "{$endpoint}/openai/assistants/{$apiVer}/threads/{$threadId}/runs/{$runId}?api-version={$apiVer}";
-    [$c2, $b2] = azureRequest('GET', $url, null, $apiKey);
-    if ($c2 < 200 || $c2 >= 300) throw new Exception("Run status failed ({$c2}): {$b2}");
-    $st = json_decode($b2, true);
-    $status = $st['status'] ?? 'failed';
+// Add user message
+$addMsgBody = [
+  'role' => 'user',
+  'content' => [
+    ['type' => 'text', 'text' => $message]
+  ]
+];
+[$resMsg, $codeMsg, $errMsg] = curl_json("$API_BASE/threads/$threadId/messages", 'POST', $addMsgBody, $headers);
+if ($codeMsg >= 400 || !$resMsg) {
+  json_fail('Add message error: ' . ($errMsg ?: json_encode($resMsg)), $codeMsg ?: 500);
+}
+
+// Create run
+$runBody = [
+  'assistant_id' => $ASSISTANT_ID
+];
+[$resRun, $codeRun, $errRun] = curl_json("$API_BASE/threads/$threadId/runs", 'POST', $runBody, $headers);
+if ($codeRun >= 400 || !$resRun || empty($resRun['id'])) {
+  json_fail('Run create error: ' . ($errRun ?: json_encode($resRun)), $codeRun ?: 500);
+}
+$runId = $resRun['id'];
+
+// Poll run status
+$maxWait = 60; // seconds
+$start = time();
+$status = $resRun['status'] ?? 'queued';
+while (!in_array($status, ['completed', 'failed', 'cancelled', 'expired'])) {
+  if ((time() - $start) > $maxWait) {
+    json_fail('Run polling timeout.', 504);
   }
-  if ($status !== 'completed') {
-    throw new Exception("Run did not complete (status: {$status}).");
+  usleep(700000); // 0.7s
+  [$resCheck, $codeCheck, $errCheck] = curl_json("$API_BASE/threads/$threadId/runs/$runId", 'GET', null, $headers);
+  if ($codeCheck >= 400 || !$resCheck) {
+    json_fail('Run status error: ' . ($errCheck ?: json_encode($resCheck)), $codeCheck ?: 500);
   }
+  $status = $resCheck['status'] ?? 'queued';
+}
 
-  // Fetch last assistant message
-  $url = "{$endpoint}/openai/assistants/{$apiVer}/threads/{$threadId}/messages?order=desc&limit=1&api-version={$apiVer}";
-  [$mCode, $mResp] = azureRequest('GET', $url, null, $apiKey);
-  if ($mCode < 200 || $mCode >= 300) throw new Exception("Fetch messages failed ({$mCode}): {$mResp}");
-  $msgs = json_decode($mResp, true);
+if ($status !== 'completed') {
+  json_fail("Run ended with status: $status", 500);
+}
 
-  $reply = '';
-  if (!empty($msgs['data'][0]['content'])) {
-    foreach ($msgs['data'][0]['content'] as $part) {
-      if (($part['type'] ?? '') === 'text' && isset($part['text']['value'])) {
-        $reply .= $part['text']['value'];
+// Fetch latest assistant message
+[$resList, $codeList, $errList] = curl_json("$API_BASE/threads/$threadId/messages?order=desc&limit=1", 'GET', null, $headers);
+if ($codeList >= 400 || !$resList || empty($resList['data'][0])) {
+  json_fail('Messages fetch error: ' . ($errList ?: json_encode($resList)), $codeList ?: 500);
+}
+$latest = $resList['data'][0];
+$reply = '';
+if (!empty($latest['content'][0]['text']['value'])) {
+  $reply = $latest['content'][0]['text']['value'];
+} else {
+  // Fallback: try to assemble all text parts
+  if (!empty($latest['content']) && is_array($latest['content'])) {
+    foreach ($latest['content'] as $c) {
+      if (!empty($c['text']['value'])) {
+        $reply .= $c['text']['value'] . "\n";
       }
     }
     $reply = trim($reply);
   }
-  if ($reply === '') $reply = 'No answer produced.';
-
-  echo json_encode(['ok' => true, 'reply' => $reply]);
-} catch (Throwable $e) {
-  http_response_code(500);
-  echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
 }
+
+echo json_encode([
+  'ok'        => true,
+  'reply'     => $reply ?: '(empty assistant reply)',
+  'thread_id' => $threadId
+], JSON_UNESCAPED_UNICODE);
+
