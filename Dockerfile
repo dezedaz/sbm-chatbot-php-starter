@@ -1,11 +1,14 @@
-FROM php:8.2-apache
+FROM php:8.2-cli
 
-RUN docker-php-ext-install pdo pdo_mysql && a2enmod rewrite
+WORKDIR /app
+COPY . /app
 
-ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
-RUN sed -ri "s#DocumentRoot /var/www/html#DocumentRoot ${APACHE_DOCUMENT_ROOT}#g" /etc/apache2/sites-available/000-default.conf
+# Aller dans le dossier public où il y a index.php
+WORKDIR /app/public
 
-COPY . /var/www/html
+# Render choisit un port automatiquement via la variable $PORT
+EXPOSE 10000
 
-EXPOSE 8080
-CMD ["apache2-foreground"]
+# Lancer le serveur PHP intégré en écoutant sur $PORT
+CMD ["sh", "-c", "php -S 0.0.0.0:${PORT}"]
+
