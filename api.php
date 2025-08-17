@@ -1,6 +1,6 @@
 <?php
-// api.php — JSON-only endpoint for the chatbot
-// Requirements: env vars AZURE_ENDPOINT, AZURE_API_KEY, ASSISTANT_ID
+// api.php — JSON-only endpoint for the chatbot (Azure OpenAI Assistants v1)
+// Env: AZURE_ENDPOINT, AZURE_API_KEY, ASSISTANT_ID
 declare(strict_types=1);
 
 @session_set_cookie_params([
@@ -34,6 +34,9 @@ $endpoint     = rtrim(getenv('AZURE_ENDPOINT') ?: $_ENV['AZURE_ENDPOINT'] ?? '',
 $apiKey       = getenv('AZURE_API_KEY') ?: $_ENV['AZURE_API_KEY'] ?? '';
 $assistant_id = getenv('ASSISTANT_ID') ?: $_ENV['ASSISTANT_ID'] ?? '';
 $api_version  = '2024-07-01-preview';
+
+// ✅ Azure OpenAI Assistants use /openai/assistants/v1/...
+$base = $endpoint . "/openai/assistants/v1";
 
 if (!$endpoint || !$apiKey || !$assistant_id) {
   fail(500, 'Missing configuration. Check AZURE_ENDPOINT, AZURE_API_KEY, ASSISTANT_ID.');
@@ -95,7 +98,7 @@ function az_get(string $url, string $apiKey) {
 // 1) Ensure we have a thread
 $thread_id = $_SESSION['thread_id'] ?? null;
 if (!$thread_id) {
-  $url = "{$endpoint}/openai/assistants/threads?api-version={$api_version}";
+  $url = "{$base}/threads?api-version={$api_version}";
   [$st, $body] = az_post($url, [], $apiKey);
   $json = json_decode($body, true);
   if ($st < 200 || $st >= 300 || !isset($json['id'])) {
@@ -106,7 +109,7 @@ if (!$thread_id) {
 }
 
 // 2) Add user message
-$url = "{$endpoint}/openai/assistants/threads/{$thread_id}/messages?api-version={$api_version}";
+$url = "{$base}/threads/{$thread_id}/messages?api-version={$api_version}";
 $payload = [
   'role' => 'user',
   'content' => [
@@ -119,7 +122,7 @@ if ($st < 200 || $st >= 300) {
 }
 
 // 3) Create a run
-$url = "{$endpoint}/openai/assistants/threads/{$thread_id}/runs?api-version={$api_version}";
+$url = "{$base}/threads/{$thread_id}/runs?api-version={$api_version}";
 $payload = ['assistant_id' => $assistant_id];
 [$st, $body] = az_post($url, $payload, $apiKey);
 $run = json_decode($body, true);
@@ -128,15 +131,15 @@ if ($st < 200 || $st >= 300 || !isset($run['id'])) {
 }
 $run_id = $run['id'];
 
-// 4) Poll until completed (or failed/time out)
-$poll_url = "{$endpoint}/openai/assistants/threads/{$thread_id}/runs/{$run_id}?api-version={$api_version}";
-$deadline = microtime(true) + 45; // 45s max
+// 4) Poll until completed
+$poll_url = "{$base}/threads/{$thread_id}/runs/{$run_id}?api-version={$api_version}";
+$deadline = microtime(true) + 45;
 $status = $run['status'] ?? 'queued';
 while (in_array($status, ['queued','in_progress','requires_action'], true)) {
   if (microtime(true) > $deadline) {
     fail(504, 'Run timed out', ['last_status' => $status]);
   }
-  usleep(500000); // 0.5s
+  usleep(500000);
   [$st, $body] = az_get($poll_url, $apiKey);
   $run = json_decode($body, true);
   if ($st < 200 || $st >= 300) {
@@ -149,7 +152,7 @@ if ($status !== 'completed') {
 }
 
 // 5) Fetch the latest assistant message
-$messages_url = "{$endpoint}/openai/assistants/threads/{$thread_id}/messages?api-version={$api_version}&order=desc&limit=5";
+$messages_url = "{$base}/threads/{$thread_id}/messages?api-version={$api_version}&order=desc&limit=5";
 [$st, $body] = az_get($messages_url, $apiKey);
 $msgs = json_decode($body, true);
 if ($st < 200 || $st >= 300) {
@@ -170,3 +173,4 @@ if ($reply === '') {
 }
 
 echo json_encode(['ok' => true, 'thread_id' => $thread_id, 'reply' => $reply], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
