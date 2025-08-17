@@ -3,7 +3,7 @@ session_start();
 
 /* ====== CONFIG ====== */
 $AZURE_ENDPOINT = "https://sbmchatbot.openai.azure.com";
-$API_VERSION    = "2024-08-01-preview";
+$API_VERSION    = "2024-08-01-preview";            // <-- version dans le chemin
 $ASSISTANT_ID   = "asst_WrGbhVrIqfqOqg5g1omyddBB";
 
 /* Clé : env var d'abord, sinon ta clé fournie */
@@ -15,10 +15,10 @@ if (!$AZURE_API_KEY || trim($AZURE_API_KEY) === "") {
 /* ====== UTILS ====== */
 function safe($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 
-/* Appel générique Azure Assistants v1, en forçant Content-Length */
+/* Appel générique Azure Assistants : version dans le PATH */
 function azure_call($method, $path, $apiVersion, $apiKey, $endpoint, $bodyAssocOrNull = null) {
-  $url = rtrim($endpoint, "/") . "/openai/assistants/v1/" . ltrim($path, "/");
-  $url .= (strpos($url,'?')===false ? '?' : '&') . "api-version=" . urlencode($apiVersion);
+  // Azure: /openai/assistants/{api-version}/...
+  $url = rtrim($endpoint, "/") . "/openai/assistants/" . rawurlencode($apiVersion) . "/" . ltrim($path, "/");
 
   $ch = curl_init($url);
 
@@ -131,7 +131,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['message'])) {
         $botReply = "⚠️ Erreur MESSAGE ($code2) : ".safe($resp2 ?: $err2);
       }
     } else {
-      // Affiche aussi un extrait de la page HTML (comme ton 411) pour comprendre
       $preview = $resp1 ?: $err1;
       if ($preview && strlen($preview) > 600) $preview = substr($preview, 0, 600) . "...";
       $botReply = "⚠️ Erreur THREAD ($code1).\nAperçu: " . safe($preview);
