@@ -1,6 +1,7 @@
 services:
   - type: web
     name: sbm-chatbot
-    env: php
-    buildCommand: ""
-    startCommand: ""
+    env: docker
+    plan: free
+    autoDeploy: true
+
