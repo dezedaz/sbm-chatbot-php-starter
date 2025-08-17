@@ -1,189 +1,141 @@
-<?php
-// For footer info (display only)
-$endpoint  = getenv('AZURE_ENDPOINT') ?: 'https://YOUR-ENDPOINT.openai.azure.com';
-$api_ver   = '2024-07-01-preview';
-$assistant = getenv('ASSISTANT_ID') ?: 'asst_********';
-?>
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>SBM BlueGate — Demo</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="icon" href="sbm_logo.png" />
-  <style>
-    :root{
-      --bg:#0b0f14;--panel:#111823;--panel-2:#0f1620;--text:#e9eef6;--muted:#9db0c5;
-      --primary:#2f80ff;--primary-700:#2563eb;--accent:#1f2937;--border:#1f2a3a;
-      --chip:#0d223b;--danger:#f59e0b;
-    }
-    *{box-sizing:border-box}
-    body{
-      margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-    }
-    header{
-      display:flex;align-items:center;gap:.6rem;padding:16px 22px;border-bottom:1px solid var(--border);
-      background:linear-gradient(180deg,rgba(47,128,255,.06),transparent);
-    }
-    header img{height:18px;opacity:.9}
-    header h1{margin:0;font-size:16px;font-weight:600;color:#cfe2ff}
-    main{max-width:1100px;margin:28px auto;padding:0 20px}
-    .hero{
-      background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--border);
-      border-radius:18px;padding:28px 28px 26px;box-shadow:0 8px 24px rgba(0,0,0,.35);
-    }
-    .hero h2{margin:0 0 10px;font-size:28px;letter-spacing:.2px}
-    .hero p{margin:0;color:var(--muted)}
-    /* Floating button */
-    .fab{
-      position:fixed;right:20px;bottom:20px;display:flex;align-items:center;gap:.6rem;
-      background:var(--primary);color:#fff;border:none;border-radius:999px;padding:12px 18px;
-      cursor:pointer;box-shadow:0 10px 24px rgba(47,128,255,.35);font-weight:600
-    }
-    .fab:hover{background:var(--primary-700)}
-    /* Widget panel */
-    .widget{
-      position:fixed;right:20px;bottom:92px;width:min(520px,92vw);
-      background:var(--panel);border:1px solid var(--border);border-radius:16px;
-      box-shadow:0 18px 50px rgba(0,0,0,.5);display:none;flex-direction:column;overflow:hidden;
-    }
-    .widget.open{display:flex}
-    .w-head{
-      display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);
-      background:linear-gradient(180deg,rgba(47,128,255,.08),rgba(47,128,255,.02));
-    }
-    .w-title{display:flex;align-items:center;gap:.5rem;font-weight:700}
-    .close{
-      background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:10px;padding:6px 10px;cursor:pointer
-    }
-    .w-body{padding:16px;display:flex;flex-direction:column;gap:10px}
-    .row{display:flex;gap:8px}
-    .row input{
-      flex:1;background:#0b1220;border:1px solid var(--border);color:var(--text);border-radius:10px;padding:12px
-    }
-    .row button{
-      background:var(--primary);border:none;color:#fff;border-radius:10px;padding:12px 16px;font-weight:600;cursor:pointer
-    }
-    .row button:hover{background:var(--primary-700)}
-    .muted{font-size:12px;color:var(--muted);background:var(--chip);border:1px solid var(--border);padding:10px;border-radius:10px}
-    .danger{background:#3b2a0a;border-color:#4c3610;color:#ffedc2}
-    .footer{
-      font-size:12px;color:var(--muted);display:flex;gap:.6rem;flex-wrap:wrap;padding:0 16px 14px
-    }
-    .chip{background:var(--chip);border:1px solid var(--border);padding:6px 8px;border-radius:999px}
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SBM BlueGate — Chatbot</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#0f1620; --panel2:#111823; --text:#ecf2ff; --muted:#a7b3c6;
+    --accent:#2f80ff; --border:#1f2a3a; --bubble:#0d223b; --danger:#db5461;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:32px auto;padding:0 16px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:22px;box-shadow:0 8px 28px rgba(0,0,0,.35)}
+  h1{margin:0 0 12px 0;font-size:28px}
+  p{margin:0;color:var(--muted)}
+
+  #chatBtn{position:fixed;right:18px;bottom:18px;padding:12px 16px;border:0;border-radius:999px;
+    background:var(--accent);color:#fff;font-weight:700;box-shadow:0 10px 24px rgba(47,128,255,.35);cursor:pointer}
+
+  #panel{position:fixed;right:18px;bottom:78px;width:360px;max-width:92vw;display:none;background:var(--panel2);
+    border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 18px 36px rgba(0,0,0,.5)}
+  #head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;background:var(--panel);
+    border-bottom:1px solid var(--border)}
+  #head .title{font-weight:800}
+  #head .close{border:0;background:transparent;color:var(--muted);font-size:18px;cursor:pointer}
+
+  #msgs{height:280px;overflow:auto;padding:12px}
+  .msg{margin:8px 0;max-width:82%;padding:9px 11px;border-radius:12px;word-wrap:break-word;white-space:pre-wrap}
+  .me{background:var(--accent);color:#fff;margin-left:auto}
+  .bot{background:var(--bubble);color:var(--text)}
+  .err{background:rgba(219,84,97,.15);border:1px solid rgba(219,84,97,.5);color:#ffdfe2}
+
+  #bar{display:flex;gap:8px;padding:10px;border-top:1px solid var(--border);background:var(--panel)}
+  #inp{flex:1;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0b1220;color:var(--text)}
+  #send,#reset{padding:10px 12px;border:0;border-radius:10px;font-weight:700;cursor:pointer}
+  #send{background:var(--accent);color:#fff}
+  #reset{background:#1e2a3a;color:var(--muted)}
+  .hint{padding:8px 12px;color:var(--muted);font-size:12px;border-top:1px solid var(--border);background:var(--panel)}
+</style>
 </head>
 <body>
-  <header>
-    <img src="sbm_logo.png" alt="SBM logo" />
-    <h1>SBM BlueGate — Demo</h1>
-  </header>
+  <div class="wrap">
+    <div class="card">
+      <h1>Welcome 👋</h1>
+      <p>This is a BlueGate demo page. Use the blue button at the bottom-right to open the chatbot panel.</p>
+    </div>
+  </div>
 
-  <main>
-    <section class="hero">
-      <h2>Welcome 👋</h2>
-      <p>This is a BlueGate demonstration page. Use the blue button at the bottom-right to open the chatbot.</p>
-    </section>
-  </main>
+  <button id="chatBtn" aria-controls="panel">Chatbot</button>
 
-  <!-- Chat widget -->
-  <section id="widget" class="widget" aria-live="polite">
-    <div class="w-head">
-      <div class="w-title">
-        <img src="sbm_logo.png" alt="" style="height:16px;opacity:.8" />
-        <span>SBM Chatbot</span>
-      </div>
-      <button class="close" id="closeBtn" aria-label="Close chatbot">Close</button>
+  <div id="panel" role="dialog" aria-modal="true" aria-labelledby="chatTitle">
+    <div id="head">
+      <div class="title" id="chatTitle">SBM Chatbot</div>
+      <button class="close" title="Close" aria-label="Close">&times;</button>
     </div>
 
-    <div class="w-body">
-      <div id="status" class="muted" style="display:none"></div>
+    <div id="msgs" aria-live="polite" aria-atomic="false"></div>
 
-      <div class="row">
-        <input id="msg" type="text" placeholder="Type your question..." />
-        <button id="sendBtn">Send</button>
-        <button id="resetBtn" style="background:#374151">Reset</button>
-      </div>
-
-      <div class="muted">
-        <strong>Endpoint:</strong> <?php echo htmlspecialchars($endpoint); ?> &nbsp;•&nbsp;
-        <strong>API:</strong> <?php echo $api_ver; ?> &nbsp;•&nbsp;
-        <strong>Assistant:</strong> <?php echo htmlspecialchars($assistant); ?>
-      </div>
+    <div id="bar">
+      <input id="inp" placeholder="Type a message…" autocomplete="off" />
+      <button id="send">Send</button>
+      <button id="reset" title="Clear messages">Reset</button>
     </div>
 
-    <div class="footer">
-      <span class="chip">Tip: ask IT or company-knowledge questions.</span>
-    </div>
-  </section>
+    <div class="hint">Connected to your server (Assistants API via Render).</div>
+  </div>
 
-  <button class="fab" id="fabBtn" aria-expanded="false">Chatbot</button>
+<script>
+  const btn   = document.getElementById('chatBtn');
+  const panel = document.getElementById('panel');
+  const close = document.querySelector('#head .close');
+  const msgs  = document.getElementById('msgs');
+  const inp   = document.getElementById('inp');
+  const sendB = document.getElementById('send');
+  const resetB= document.getElementById('reset');
 
-  <script>
-    const widget   = document.getElementById('widget');
-    const fabBtn   = document.getElementById('fabBtn');
-    const closeBtn = document.getElementById('closeBtn');
-    const sendBtn  = document.getElementById('sendBtn');
-    const resetBtn = document.getElementById('resetBtn');
-    const input    = document.getElementById('msg');
-    const statusEl = document.getElementById('status');
+  let busy = false;
+  const openPanel  = () => { panel.style.display = 'block'; inp.focus(); };
+  const closePanel = () => { panel.style.display = 'none'; };
 
-    function openWidget(){ widget.classList.add('open'); fabBtn.setAttribute('aria-expanded','true'); input.focus(); }
-    function closeWidget(){ widget.classList.remove('open'); fabBtn.setAttribute('aria-expanded','false'); }
-    fabBtn.addEventListener('click', openWidget);
-    closeBtn.addEventListener('click', closeWidget);
+  btn.addEventListener('click', openPanel);
+  close.addEventListener('click', closePanel);
 
-    // Helper to show temporary status/info
-    function showStatus(text, kind='info'){
-      statusEl.textContent = text;
-      statusEl.style.display = 'block';
-      statusEl.className = 'muted' + (kind==='error' ? ' danger' : '');
-      setTimeout(()=>{ statusEl.style.display='none'; }, 4000);
+  function add(text, cls){
+    const d = document.createElement('div');
+    d.className = 'msg ' + cls;
+    d.textContent = text;
+    msgs.appendChild(d);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  async function callAPI(message){
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+    try {
+      const res = await fetch('chat_api.php', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ message }),
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error || 'Unknown server error');
+      return json.reply || 'No answer produced.';
+    } catch (err) {
+      clearTimeout(timeout);
+      throw err;
     }
+  }
 
-    // Send message to your existing PHP endpoint (index.php)
-    async function sendMessage(){
-      const q = input.value.trim();
-      if(!q){ input.focus(); return; }
-      sendBtn.disabled = true;
-
-      try{
-        // If your index.php exposes an AJAX path, keep it. Otherwise this will still POST to index.php.
-        const res = await fetch('index.php?ajax=1', {
-          method:'POST',
-          headers:{'Content-Type':'application/x-www-form-urlencoded'},
-          body: new URLSearchParams({ message:q })
-        });
-
-        // Try to read text; many backends return plaintext
-        const txt = await res.text();
-        if(!res.ok){
-          showStatus(`Error ${res.status}: ${txt || 'Request failed.'}`, 'error');
-        }else{
-          showStatus('Message sent. Check the main chat page for full history.', 'info');
-        }
-      }catch(err){
-        showStatus('Network error. Please try again.', 'error');
-      }finally{
-        sendBtn.disabled = false;
-        input.value = '';
-        input.focus();
-      }
+  async function send(){
+    if (busy) return;
+    const q = inp.value.trim();
+    if(!q) return;
+    add(q, 'me');
+    inp.value = '';
+    busy = true;
+    try {
+      const reply = await callAPI(q);
+      add(reply, 'bot');
+    } catch (e){
+      add(`Error: ${e.message || e}`, 'err');
+    } finally {
+      busy = false;
+      inp.focus();
     }
+  }
 
-    sendBtn.addEventListener('click', sendMessage);
-    input.addEventListener('keydown', e => { if(e.key==='Enter') sendMessage(); });
-
-    resetBtn.addEventListener('click', async ()=>{
-      try{
-        await fetch('index.php?reset=1', { method:'GET' });
-        showStatus('Chat has been reset.');
-      }catch(_){
-        showStatus('Unable to reset chat.', 'error');
-      }
-    });
-  </script>
+  sendB.addEventListener('click', send);
+  inp.addEventListener('keydown', e => { if(e.key === 'Enter') send(); });
+  resetB.addEventListener('click', () => { msgs.innerHTML = ''; });
+</script>
 </body>
 </html>
+
 
 
