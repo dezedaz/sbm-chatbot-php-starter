@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: sbm-chatbot-php
+    env: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /?health=1
+    envVars:
+      - key: AZURE_ENDPOINT
+        sync: false
+      - key: AZURE_API_KEY
+        sync: false
+      - key: ASSISTANT_ID
+        sync: false
