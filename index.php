@@ -1,44 +1,45 @@
 <?php
 session_start();
 
-/* -------------------- CONFIG -------------------- */
+/* ====== CONFIG ====== */
 $AZURE_ENDPOINT = "https://sbmchatbot.openai.azure.com";
+$API_VERSION    = "2024-08-01-preview";
 $ASSISTANT_ID   = "asst_WrGbhVrIqfqOqg5g1omyddBB";
 
-/* Clé : on prend la variable d'environnement si présente,
-   sinon on utilise la clé que tu m'as fournie. */
+/* Clé : env var d'abord, sinon ta clé fournie */
 $AZURE_API_KEY  = getenv("AZURE_API_KEY");
 if (!$AZURE_API_KEY || trim($AZURE_API_KEY) === "") {
   $AZURE_API_KEY = "F4GkErnSxB1YyTAtIZ7aIwWirmAFTrClqALkVr2VhRvJWJxqPe32JQQJ99BHACYeBjFXJ3w3AAABACOGO0aZ";
 }
 
-/* -------------------- HELPERS -------------------- */
-function azure_call($method, $path, $body = null, $apiKey = "", $endpoint = "") {
+/* ====== UTILS ====== */
+function safe($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+
+function azure_call($method, $path, $apiVersion, $apiKey, $endpoint, $body = null) {
   $url = rtrim($endpoint, "/") . "/openai/assistants/v1/" . ltrim($path, "/");
+  $url .= (strpos($url,'?')===false ? '?' : '&') . "api-version=" . urlencode($apiVersion);
+
   $ch = curl_init($url);
   $headers = [
     "api-key: $apiKey",
     "Content-Type: application/json"
   ];
-  curl_setopt($ch, CURLOPT_CUSTOMREQUEST, strtoupper($method));
-  curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-  curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-  if (!is_null($body)) {
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
-  }
+  curl_setopt_array($ch, [
+    CURLOPT_CUSTOMREQUEST  => strtoupper($method),
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_HTTPHEADER     => $headers,
+    CURLOPT_TIMEOUT        => 25
+  ]);
+  if (!is_null($body)) curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
+
   $resp = curl_exec($ch);
   $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
   $err  = curl_error($ch);
   curl_close($ch);
-
-  return [$http, $resp, $err];
+  return [$http, $resp, $err, $url];
 }
 
-function safe_text($s) {
-  return htmlspecialchars($s ?? "", ENT_QUOTES, 'UTF-8');
-}
-
-/* -------------------- STATE -------------------- */
+/* ====== STATE ====== */
 if (!isset($_SESSION['history'])) $_SESSION['history'] = [];
 
 /* Reset chat */
@@ -48,117 +49,114 @@ if (isset($_POST['reset'])) {
   exit;
 }
 
-/* -------------------- HANDLE SEND -------------------- */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['message'])) {
-  $user = trim((string)$_POST['message']);
-  if ($user !== '') {
-    $_SESSION['history'][] = ['role' => 'user', 'content' => $user];
+/* ====== SEND ====== */
+if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['message'])) {
+  $userMsg = trim((string)$_POST['message']);
+  if ($userMsg !== '') {
+    $_SESSION['history'][] = ['role'=>'user','content'=>$userMsg];
 
-    // 1) Create thread
-    [$code1, $resp1, $err1] = azure_call("POST", "threads", null, $AZURE_API_KEY, $AZURE_ENDPOINT);
-    $data1 = $resp1 ? json_decode($resp1, true) : null;
+    // 1) Create thread (body vide = {} sinon certains environnements renvoient 400)
+    [$code1,$resp1,$err1,$u1] = azure_call("POST","threads",$API_VERSION,$AZURE_API_KEY,$AZURE_ENDPOINT,(object)[]);
+    $data1 = $resp1 ? json_decode($resp1,true) : null;
     $threadId = $data1['id'] ?? null;
 
     $botReply = null;
-    if ($code1 >= 200 && $code1 < 300 && $threadId) {
-      // 2) Add user message
-      $bodyMsg = ["role" => "user", "content" => $user];
-      [$code2, $resp2, $err2] = azure_call("POST", "threads/$threadId/messages", $bodyMsg, $AZURE_API_KEY, $AZURE_ENDPOINT);
 
-      if ($code2 >= 200 && $code2 < 300) {
+    if ($code1>=200 && $code1<300 && $threadId) {
+      // 2) Add user message (format string simple accepté par v1)
+      $msgBody = ["role"=>"user","content"=>$userMsg];
+      [$code2,$resp2,$err2,$u2] = azure_call("POST","threads/$threadId/messages",$API_VERSION,$AZURE_API_KEY,$AZURE_ENDPOINT,$msgBody);
+
+      if ($code2>=200 && $code2<300) {
         // 3) Run assistant
-        $bodyRun = ["assistant_id" => $ASSISTANT_ID];
-        [$code3, $resp3, $err3] = azure_call("POST", "threads/$threadId/runs", $bodyRun, $AZURE_API_KEY, $AZURE_ENDPOINT);
-        $data3 = $resp3 ? json_decode($resp3, true) : null;
+        $runBody = ["assistant_id"=>$ASSISTANT_ID];
+        [$code3,$resp3,$err3,$u3] = azure_call("POST","threads/$threadId/runs",$API_VERSION,$AZURE_API_KEY,$AZURE_ENDPOINT,$runBody);
+        $data3 = $resp3 ? json_decode($resp3,true) : null;
         $runId = $data3['id'] ?? null;
 
-        if ($code3 >= 200 && $code3 < 300 && $runId) {
-          // 4) Poll status until completed/failed (timeout ~8s)
+        if ($code3>=200 && $code3<300 && $runId) {
+          // 4) Poll until completed (max ~8s)
           $status = $data3['status'] ?? 'queued';
           $tries  = 0;
-          while (in_array($status, ['queued','in_progress']) && $tries < 40) {
-            usleep(200000); // 200ms
-            [$codeS, $respS, $errS] = azure_call("GET", "threads/$threadId/runs/$runId", null, $AZURE_API_KEY, $AZURE_ENDPOINT);
-            $dataS = $respS ? json_decode($respS, true) : null;
+          while (in_array($status,['queued','in_progress']) && $tries<32) {
+            usleep(250000); // 250 ms
+            [$codeS,$respS,$errS,$uS] = azure_call("GET","threads/$threadId/runs/$runId",$API_VERSION,$AZURE_API_KEY,$AZURE_ENDPOINT);
+            $dataS = $respS ? json_decode($respS,true) : null;
             $status = $dataS['status'] ?? 'failed';
             $tries++;
           }
 
-          if ($status === 'completed') {
-            // 5) Fetch messages (assistant reply)
-            [$codeM, $respM, $errM] = azure_call("GET", "threads/$threadId/messages", null, $AZURE_API_KEY, $AZURE_ENDPOINT);
-            $dataM = $respM ? json_decode($respM, true) : null;
+          if ($status==='completed') {
+            // 5) Read messages (find first assistant message)
+            [$codeM,$respM,$errM,$uM] = azure_call("GET","threads/$threadId/messages",$API_VERSION,$AZURE_API_KEY,$AZURE_ENDPOINT);
+            $dataM = $respM ? json_decode($respM,true) : null;
             if (!empty($dataM['data'])) {
-              // The list is usually newest first
               foreach ($dataM['data'] as $m) {
-                if (($m['role'] ?? '') === 'assistant') {
-                  $parts = $m['content'][0]['text']['value'] ?? null;
-                  if ($parts) { $botReply = $parts; break; }
+                if (($m['role']??'')==='assistant') {
+                  // content: [ { type: "text", text: { value: "..." } } ]
+                  $val = $m['content'][0]['text']['value'] ?? null;
+                  if ($val) { $botReply = $val; break; }
                 }
               }
             }
+            if (!$botReply) $botReply = "⚠️ Aucune réponse texte trouvée dans les messages.";
           } else {
-            $botReply = "⚠️ Assistant run status: " . safe_text($status);
+            $botReply = "⚠️ Run non terminé (status = ".safe($status).")";
           }
         } else {
-          $botReply = "⚠️ Run error ($code3): " . safe_text($resp3 ?: $err3);
+          $botReply = "⚠️ Erreur RUN ($code3) : ".safe($resp3 ?: $err3);
         }
       } else {
-        $botReply = "⚠️ Add message error ($code2): " . safe_text($resp2 ?: $err2);
+        $botReply = "⚠️ Erreur MESSAGE ($code2) : ".safe($resp2 ?: $err2);
       }
     } else {
-      $botReply = "⚠️ Thread error ($code1): " . safe_text($resp1 ?: $err1);
+      $botReply = "⚠️ Erreur THREAD ($code1) : ".safe($resp1 ?: $err1);
     }
 
-    if (!$botReply) $botReply = "⚠️ Pas de réponse de l’assistant.";
-    $_SESSION['history'][] = ['role' => 'assistant', 'content' => $botReply];
+    $_SESSION['history'][] = ['role'=>'assistant','content'=>$botReply ?: "⚠️ Pas de réponse générée."];
   }
 }
 ?>
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8" />
-  <title>SBM Chatbot</title>
-  <style>
-    body { font-family: Arial, sans-serif; background:#1e1e1e; color:#fff; margin:0; display:flex; min-height:100vh; align-items:center; justify-content:center; }
-    .card { width: 95%; max-width: 560px; background:#2b2b2b; border-radius:14px; box-shadow:0 6px 18px rgba(0,0,0,0.35); overflow:hidden; }
-    .header { background:#3a3a3a; padding:14px 18px; text-align:center; font-weight:700; letter-spacing:.5px; }
-    .messages { max-height: 60vh; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
-    .bubble { padding:10px 12px; border-radius:10px; max-width:78%; font-size:14px; line-height:1.35; }
-    .user      { align-self:flex-end; background:#1e88e5; }
-    .assistant { align-self:flex-start; background:#424242; }
-    .row { display:flex; gap:8px; padding:12px; background:#2b2b2b; border-top:1px solid #3b3b3b; }
-    .row input[type=text]{ flex:1; padding:10px 12px; border-radius:8px; border:none; outline:none; background:#3a3a3a; color:#fff; }
-    .row button { padding:10px 14px; border:none; border-radius:8px; background:#1e88e5; color:#fff; cursor:pointer; }
-    .reset { width:100%; text-align:center; padding:10px 12px; background:#2b2b2b; border-top:1px solid #3b3b3b; }
-    .reset button { padding:8px 12px; border:none; border-radius:8px; background:#d9534f; color:#fff; cursor:pointer; }
-    .hint { font-size:12px; opacity:.75; margin-top:6px; text-align:center; }
-  </style>
+<meta charset="UTF-8" />
+<title>SBM Chatbot</title>
+<style>
+  body { font-family: Arial, sans-serif; background:#1e1e1e; color:#fff; margin:0; min-height:100vh; display:flex; justify-content:center; align-items:center; }
+  .card { width:95%; max-width:560px; background:#2b2b2b; border-radius:14px; box-shadow:0 6px 18px rgba(0,0,0,.35); overflow:hidden; }
+  .header { background:#3a3a3a; padding:14px 18px; text-align:center; font-weight:700; letter-spacing:.5px; }
+  .messages { max-height:60vh; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
+  .bubble { padding:10px 12px; border-radius:10px; max-width:78%; font-size:14px; line-height:1.35; }
+  .user      { align-self:flex-end; background:#1e88e5; }
+  .assistant { align-self:flex-start; background:#424242; }
+  .row { display:flex; gap:8px; padding:12px; background:#2b2b2b; border-top:1px solid #3b3b3b; }
+  .row input[type=text]{ flex:1; padding:10px 12px; border-radius:8px; border:none; outline:none; background:#3a3a3a; color:#fff; }
+  .row button { padding:10px 14px; border:none; border-radius:8px; background:#1e88e5; color:#fff; cursor:pointer; }
+  .reset { width:100%; text-align:center; padding:10px 12px; background:#2b2b2b; border-top:1px solid #3b2b2b; }
+  .reset button { padding:8px 12px; border:none; border-radius:8px; background:#d9534f; color:#fff; cursor:pointer; }
+</style>
 </head>
 <body>
   <div class="card">
     <div class="header">SBM Chatbot</div>
     <div class="messages" id="messages">
       <?php foreach ($_SESSION['history'] as $m): ?>
-        <div class="bubble <?= $m['role'] ?>"><?= safe_text($m['content']) ?></div>
+        <div class="bubble <?= $m['role'] ?>"><?= safe($m['content']) ?></div>
       <?php endforeach; ?>
     </div>
-
     <form method="post" class="row" autocomplete="off">
       <input type="text" name="message" placeholder="Pose ta question..." />
       <button type="submit">Envoyer</button>
     </form>
-
     <form method="post" class="reset">
       <button name="reset" type="submit">Réinitialiser</button>
-      <div class="hint">Astuce : si tu vois un message "Thread/Run error", c’est que l’endpoint/clé/assistant_id ne répond pas.</div>
     </form>
   </div>
   <script>
-    // Scroll en bas au chargement
     const box = document.getElementById('messages');
     box.scrollTop = box.scrollHeight;
   </script>
 </body>
 </html>
+
