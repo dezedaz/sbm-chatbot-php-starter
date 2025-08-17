@@ -1,120 +1,44 @@
 <?php
-// Simple BlueGate demo page with a floating chatbot widget.
-// All strings are in English as requested.
-?>
-<!doctype html>
+// bluegate.php — simple BlueGate-like page + floating chatbot widget
+?><!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>SBM BlueGate — Demo</title>
-  <style>
-    :root {
-      --bg: #0b1020;
-      --card: #121a2c;
-      --text: #eaf0ff;
-      --muted: #9fb0d1;
-      --primary: #2b6fff;
-      --primary-2: #1f56cc;
-      --accent: #00d1ff;
-      --bubble-user: #2b6fff;
-      --bubble-bot: #1b243a;
-      --danger: #f5a97f;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji';
-      background: radial-gradient(1200px 600px at 30% -10%, #14203a 0%, transparent 50%), var(--bg);
-      color: var(--text);
-    }
-    .container {
-      max-width: 1080px;
-      margin: 48px auto;
-      padding: 0 20px;
-    }
-    .hero {
-      background: linear-gradient(180deg, #101a31 0%, #0d162a 100%);
-      border: 1px solid #1e2a48;
-      border-radius: 14px;
-      padding: 28px 24px;
-      box-shadow: 0 10px 30px rgba(0,0,0,.25);
-    }
-    .hero h1 { margin: 0 0 10px; font-size: 40px; }
-    .hero p  { margin: 0; color: var(--muted); font-size: 18px; }
+<meta charset="utf-8"/>
+<title>SBM BlueGate — Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#0f172a; --text:#e5e7eb; --muted:#9ca3af; --primary:#2563eb;
+    --border:#1f2a44; --shadow:0 14px 40px rgba(0,0,0,.38);
+  }
+  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+  .container{max-width:1060px;margin:48px auto;padding:0 20px}
+  .hero{padding:28px 28px;background:var(--panel);border-radius:16px;box-shadow:var(--shadow);border:1px solid var(--border)}
+  h1{margin:0 0 12px;font-size:40px}
+  p{margin:0;font-size:18px;color:#cbd5e1}
 
-    /* Floating chat button */
-    .chat-fab {
-      position: fixed;
-      right: 24px; bottom: 24px;
-      background: var(--primary);
-      color: white;
-      border: none;
-      border-radius: 999px;
-      padding: 14px 18px;
-      font-weight: 600;
-      font-size: 16px;
-      box-shadow: 0 10px 30px rgba(43, 111, 255, .35);
-      cursor: pointer;
-    }
-    .chat-fab:hover { background: var(--primary-2); }
+  /* Floating button */
+  .chat-fab{position:fixed;right:26px;bottom:26px;background:var(--primary);color:#fff;padding:16px 18px;border-radius:14px;
+    box-shadow:var(--shadow);cursor:pointer;border:none;font-weight:600}
+  .chat-fab:hover{filter:brightness(1.05)}
 
-    /* Widget panel */
-    .panel {
-      position: fixed;
-      right: 24px; bottom: 90px;
-      width: 520px; max-width: calc(100vw - 40px); height: 520px;
-      background: #0d1528;
-      border: 1px solid #213058;
-      border-radius: 14px;
-      box-shadow: 0 18px 60px rgba(0,0,0,.45);
-      display: none;
-      flex-direction: column;
-      overflow: hidden;
-    }
-    .panel.open { display: flex; }
-    .panel-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 14px; background: #0f1932; border-bottom: 1px solid #1e2a48;
-    }
-    .panel-title { font-weight: 700; }
-    .close-btn {
-      background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 15px;
-    }
-    .panel-body {
-      flex: 1; padding: 12px 14px; overflow-y: auto;
-      background: linear-gradient(180deg, #0b1327 0%, #0c152b 100%);
-    }
-    .meta {
-      font-size: 12px; color: var(--muted); background: #0c1733; border: 1px solid #1a2850;
-      padding: 10px 12px; border-radius: 10px; margin-top: 8px;
-    }
-    .bubble {
-      max-width: 80%;
-      padding: 10px 12px; border-radius: 12px; line-height: 1.45;
-      margin: 8px 0;
-      white-space: pre-wrap;
-    }
-    .user   { margin-left: auto; background: var(--bubble-user); color: #fff; }
-    .bot    { margin-right: auto; background: var(--bubble-bot); color: var(--text); border: 1px solid #223560; }
-    .error  { background: #3b2222; color: #ffd4c7; border: 1px solid #6d3939; }
+  /* Drawer */
+  .drawer{position:fixed;right:26px;bottom:96px;width:560px;max-width:calc(100vw - 40px);
+    background:var(--panel);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);display:none}
+  .drawer header{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border)}
+  .drawer header h3{margin:0;font-size:18px}
+  .close{margin-left:auto;background:#111827;border:1px solid var(--border);color:#e5e7eb;padding:8px 10px;border-radius:10px;cursor:pointer}
+  .close:hover{filter:brightness(1.08)}
+  .body{padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+  .note{padding:10px 12px;background:#0b1220;border:1px solid var(--border);border-radius:12px;color:#d1d5db}
 
-    .panel-input {
-      display: flex; gap: 8px;
-      padding: 12px; border-top: 1px solid #1e2a48; background: #0f1932;
-    }
-    .panel-input input {
-      flex: 1; background: #0d1528; border: 1px solid #213058; color: var(--text);
-      border-radius: 10px; padding: 12px; outline: none;
-    }
-    .panel-input button {
-      background: var(--primary); color: white; border: none; border-radius: 10px; padding: 12px 16px;
-      font-weight: 600; cursor: pointer;
-    }
-    .panel-input button:hover { background: var(--primary-2); }
-    .reset { background: #2d344a; }
-    .reset:hover { background: #384267; }
-  </style>
+  .row{display:flex;gap:8px}
+  .row input{flex:1;padding:12px;border-radius:12px;border:1px solid var(--border);background:#0b1220;color:#fff}
+  .row button{padding:12px 16px;border-radius:12px;border:0;background:var(--primary);color:#fff;cursor:pointer}
+  .row .reset{background:#374151}
+  .error{padding:10px 12px;background:#3f1d1d;border:1px solid #6b2727;border-radius:10px;color:#ffd4d4}
+  .reply{padding:12px 14px;background:#111827;border:1px solid var(--border);border-radius:12px}
+</style>
 </head>
 <body>
   <div class="container">
@@ -124,92 +48,74 @@
     </div>
   </div>
 
-  <!-- Floating open button -->
-  <button class="chat-fab" id="openChat">💬 Chatbot</button>
+  <button class="chat-fab" id="openBtn">Chatbot</button>
 
-  <!-- Chat widget -->
-  <div class="panel" id="chatPanel" aria-live="polite">
-    <div class="panel-header">
-      <div class="panel-title">SBM Chatbot</div>
-      <button class="close-btn" id="closeChat">Close</button>
-    </div>
-    <div class="panel-body" id="chatBody">
-      <div class="meta">
-        Tip: ask IT or company-knowledge questions. Messages are sent to the same thread as the main chat page.
+  <div class="drawer" id="drawer">
+    <header>
+      <h3>SBM Chatbot</h3>
+      <button class="close" id="closeBtn">Close</button>
+    </header>
+    <div class="body">
+      <div id="status" class="note">Tip: your message is sent to the same thread used by the main chat page.</div>
+
+      <div class="row">
+        <input id="ask" placeholder="Type your question…"/>
+        <button id="sendBtn">Send</button>
+        <button class="reset" id="resetBtn">Reset</button>
       </div>
-    </div>
-    <div class="panel-input">
-      <input id="chatInput" type="text" placeholder="Type your question…" />
-      <button id="sendBtn">Send</button>
-      <button id="resetBtn" class="reset">Reset</button>
+
+      <div id="out" class="reply" style="display:none"></div>
+      <div id="err" class="error" style="display:none"></div>
     </div>
   </div>
 
-  <script>
-    const panel   = document.getElementById('chatPanel');
-    const openBtn = document.getElementById('openChat');
-    const closeBtn= document.getElementById('closeChat');
-    const bodyEl  = document.getElementById('chatBody');
-    const inputEl = document.getElementById('chatInput');
-    const sendBtn = document.getElementById('sendBtn');
-    const resetBtn= document.getElementById('resetBtn');
+<script>
+const drawer  = document.getElementById('drawer');
+const openBtn = document.getElementById('openBtn');
+const closeBtn= document.getElementById('closeBtn');
+openBtn.onclick  = () => drawer.style.display = 'block';
+closeBtn.onclick = () => drawer.style.display = 'none';
 
-    const addBubble = (role, text) => {
-      const b = document.createElement('div');
-      b.className = 'bubble ' + (role === 'user' ? 'user' : role === 'error' ? 'error' : 'bot');
-      b.textContent = text;
-      bodyEl.appendChild(b);
-      bodyEl.scrollTop = bodyEl.scrollHeight;
-    };
+const out = document.getElementById('out');
+const err = document.getElementById('err');
 
-    const sendMessage = async () => {
-      const text = inputEl.value.trim();
-      if (!text) return;
-      addBubble('user', text);
-      inputEl.value = '';
-      try {
-        const body = new URLSearchParams({ message: text });
-        const res  = await fetch('/index.php?ajax=1', {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
-          },
-          body
-        });
+async function api(action, content=""){
+  const body = new URLSearchParams({ajax:"1", action, content});
+  const r = await fetch("index.php", {
+    method: "POST",
+    headers: {"Content-Type":"application/x-www-form-urlencoded", "Accept":"application/json"},
+    body
+  });
+  return r.json();
+}
 
-        // If server crashed and returned HTML (502/404), this will throw:
-        const data = await res.json().catch(() => null);
-        if (!res.ok || !data || data.ok !== true) {
-          const err = (data && data.error) ? data.error : `Request failed (${res.status})`;
-          addBubble('error', err);
-          return;
-        }
-        addBubble('bot', data.reply);
-      } catch (e) {
-        addBubble('error', 'Network error. Please try again.');
-      }
-    };
+async function send(){
+  err.style.display = "none";
+  out.style.display = "none";
+  const q = document.getElementById('ask').value.trim();
+  if(!q) return;
 
-    openBtn.onclick  = () => { panel.classList.add('open'); inputEl.focus(); };
-    closeBtn.onclick = () => { panel.classList.remove('open'); };
-    sendBtn.onclick  = sendMessage;
-    inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(); });
+  const res = await api("send", q);
+  if(res.ok){
+    out.textContent = res.reply;
+    out.style.display = "block";
+  }else{
+    err.textContent = res.error;
+    err.style.display = "block";
+  }
+}
+async function resetChat(){
+  await api("reset");
+  out.style.display = "none";
+  err.style.display = "none";
+}
 
-    resetBtn.onclick = async () => {
-      try {
-        // Reset = close current PHP session to drop the thread_id
-        await fetch('/?reset=1', { cache: 'no-store' });
-      } catch {}
-      // Soft reset UI
-      bodyEl.innerHTML = '<div class="meta">Session reset.</div>';
-    };
-
-    // Optional server-side session reset handler:
-    // you can implement it in index.php by checking GET ?reset=1 and doing session_destroy().
-  </script>
+document.getElementById('sendBtn').onclick  = send;
+document.getElementById('resetBtn').onclick = resetChat;
+</script>
 </body>
 </html>
+
 
 
 
