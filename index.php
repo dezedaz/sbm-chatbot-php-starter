@@ -1,7 +1,7 @@
 <?php
 session_start();
 
-/* --- Config from Render --- */
+/* --- Configuration from Render --- */
 $AZURE_ENDPOINT = rtrim(getenv('AZURE_ENDPOINT') ?: '', '/');
 $AZURE_API_KEY  = getenv('AZURE_API_KEY') ?: '';
 $ASSISTANT_ID   = getenv('ASSISTANT_ID') ?: '';
@@ -14,12 +14,10 @@ if (!$AZURE_ENDPOINT || !$AZURE_API_KEY || !$ASSISTANT_ID) {
   exit;
 }
 
-/* --- Minimal HTTP helper (Azure Assistants path) --- */
-function aoai_call($method, $pathAfterVersion, $body = null) {
+/* --- Minimal HTTP helper (same as your working version) --- */
+function aoai_call($method, $path, $body = null) {
   global $AZURE_ENDPOINT, $AZURE_API_KEY, $API_VERSION;
-
-  // Build URL like: {endpoint}/openai/assistants/{version}{pathAfterVersion}
-  $url = rtrim($AZURE_ENDPOINT, '/') . "/openai/assistants/{$API_VERSION}" . $pathAfterVersion;
+  $url = $AZURE_ENDPOINT . $path . (str_contains($path, '?') ? "&" : "?") . "api-version={$API_VERSION}";
 
   $ch = curl_init($url);
   $headers = [
@@ -49,7 +47,7 @@ function aoai_call($method, $pathAfterVersion, $body = null) {
 if (!isset($_SESSION['history']))   $_SESSION['history'] = [];
 if (!isset($_SESSION['thread_id'])) $_SESSION['thread_id'] = null;
 
-/* --- Reset history & thread --- */
+/* --- Reset --- */
 if (isset($_POST['reset'])) {
   $_SESSION['history'] = [];
   $_SESSION['thread_id'] = null;
@@ -63,16 +61,12 @@ if (!empty($_POST['message'])) {
   $userMessage = trim($_POST['message']);
   $_SESSION['history'][] = ['role' => 'user', 'content' => $userMessage];
 
-  /* 1) Create thread if missing */
+  /* 1) Create thread if needed */
   if (!$_SESSION['thread_id']) {
-    // Empty JSON object for body
-    [$code, $resp, $err] = aoai_call('POST', "/threads", (object)[]);
+    [$code, $resp, $err] = aoai_call('POST', "/openai/threads", []); // empty body allowed
     if ($code >= 200 && $code < 300) {
       $data = json_decode($resp, true);
       $_SESSION['thread_id'] = $data['id'] ?? null;
-      if (!$_SESSION['thread_id']) {
-        $error = "THREAD error ($code): invalid response (missing id).";
-      }
     } else {
       $error = "THREAD error ($code): " . htmlspecialchars($resp ?: $err);
     }
@@ -86,7 +80,7 @@ if (!empty($_POST['message'])) {
         ["type" => "text", "text" => $userMessage]
       ]
     ];
-    [$code, $resp, $err] = aoai_call('POST', "/threads/{$_SESSION['thread_id']}/messages", $msgBody);
+    [$code, $resp, $err] = aoai_call('POST', "/openai/threads/{$_SESSION['thread_id']}/messages", $msgBody);
     if (!($code >= 200 && $code < 300)) {
       $error = "MESSAGE error ($code): " . htmlspecialchars($resp ?: $err);
     }
@@ -95,16 +89,16 @@ if (!empty($_POST['message'])) {
   /* 3) Start a run with your assistant */
   if (!$error && $_SESSION['thread_id']) {
     $runBody = ["assistant_id" => $ASSISTANT_ID];
-    [$code, $resp, $err] = aoai_call('POST', "/threads/{$_SESSION['thread_id']}/runs", $runBody);
+    [$code, $resp, $err] = aoai_call('POST', "/openai/threads/{$_SESSION['thread_id']}/runs", $runBody);
     if ($code >= 200 && $code < 300) {
       $run = json_decode($resp, true);
       $runId = $run['id'] ?? null;
 
-      // 4) Poll until completion (timeout ~60s)
+      // 4) Poll until completion
       $deadline = time() + 60;
       $status = 'queued';
       while (time() < $deadline) {
-        [$sCode, $sResp, $sErr] = aoai_call('GET', "/threads/{$_SESSION['thread_id']}/runs/{$runId}", null);
+        [$sCode, $sResp, $sErr] = aoai_call('GET', "/openai/threads/{$_SESSION['thread_id']}/runs/{$runId}", null);
         if (!($sCode >= 200 && $sCode < 300)) {
           $error = "RUN status error ($sCode): " . htmlspecialchars($sResp ?: $sErr);
           break;
@@ -118,7 +112,7 @@ if (!empty($_POST['message'])) {
       // 5) Fetch latest assistant message
       if (!$error) {
         if ($status === 'completed') {
-          [$mCode, $mResp, $mErr] = aoai_call('GET', "/threads/{$_SESSION['thread_id']}/messages?order=desc&limit=1", null);
+          [$mCode, $mResp, $mErr] = aoai_call('GET', "/openai/threads/{$_SESSION['thread_id']}/messages?order=desc&limit=1", null);
           if ($mCode >= 200 && $mCode < 300) {
             $messages = json_decode($mResp, true);
             $items = $messages['data'] ?? [];
@@ -200,6 +194,7 @@ if (!empty($_POST['message'])) {
 <script>document.getElementById('chat').scrollTop=9999999;</script>
 </body>
 </html>
+
 
 
 
