@@ -1,20 +1,20 @@
 <?php
 session_start();
 
-/* --- Configuration from Render --- */
+/* --- Config from Render --- */
 $AZURE_ENDPOINT = rtrim(getenv('AZURE_ENDPOINT') ?: '', '/');
 $AZURE_API_KEY  = getenv('AZURE_API_KEY') ?: '';
 $ASSISTANT_ID   = getenv('ASSISTANT_ID') ?: '';
 $API_VERSION    = '2024-07-01-preview';  // Azure Assistants API version
 
-/* --- Sanity check --- */
+/* --- Safety check --- */
 if (!$AZURE_ENDPOINT || !$AZURE_API_KEY || !$ASSISTANT_ID) {
   http_response_code(500);
   echo "<pre>Missing configuration. Please set AZURE_ENDPOINT, AZURE_API_KEY and ASSISTANT_ID in Render.</pre>";
   exit;
 }
 
-/* --- Minimal HTTP helper (same as your working version) --- */
+/* --- Minimal HTTP helper --- */
 function aoai_call($method, $path, $body = null) {
   global $AZURE_ENDPOINT, $AZURE_API_KEY, $API_VERSION;
   $url = $AZURE_ENDPOINT . $path . (str_contains($path, '?') ? "&" : "?") . "api-version={$API_VERSION}";
@@ -43,11 +43,11 @@ function aoai_call($method, $path, $body = null) {
   return [$http, $resp, $err];
 }
 
-/* --- Session bootstrap --- */
-if (!isset($_SESSION['history']))   $_SESSION['history'] = [];
+/* --- Session init --- */
+if (!isset($_SESSION['history']))   $_SESSION['history']   = [];
 if (!isset($_SESSION['thread_id'])) $_SESSION['thread_id'] = null;
 
-/* --- Reset --- */
+/* --- Reset chat --- */
 if (isset($_POST['reset'])) {
   $_SESSION['history'] = [];
   $_SESSION['thread_id'] = null;
@@ -55,15 +55,16 @@ if (isset($_POST['reset'])) {
   exit;
 }
 
-/* --- Send message --- */
+/* --- Handle message --- */
 $error = null;
+
 if (!empty($_POST['message'])) {
   $userMessage = trim($_POST['message']);
   $_SESSION['history'][] = ['role' => 'user', 'content' => $userMessage];
 
   /* 1) Create thread if needed */
   if (!$_SESSION['thread_id']) {
-    [$code, $resp, $err] = aoai_call('POST', "/openai/threads", []); // empty body allowed
+    [$code, $resp, $err] = aoai_call('POST', "/openai/threads", []); // empty body is fine
     if ($code >= 200 && $code < 300) {
       $data = json_decode($resp, true);
       $_SESSION['thread_id'] = $data['id'] ?? null;
@@ -75,7 +76,7 @@ if (!empty($_POST['message'])) {
   /* 2) Add user message to thread */
   if (!$error && $_SESSION['thread_id']) {
     $msgBody = [
-      "role" => "user",
+      "role"    => "user",
       "content" => [
         ["type" => "text", "text" => $userMessage]
       ]
@@ -86,12 +87,12 @@ if (!empty($_POST['message'])) {
     }
   }
 
-  /* 3) Start a run with your assistant */
+  /* 3) Run the assistant */
   if (!$error && $_SESSION['thread_id']) {
     $runBody = ["assistant_id" => $ASSISTANT_ID];
     [$code, $resp, $err] = aoai_call('POST', "/openai/threads/{$_SESSION['thread_id']}/runs", $runBody);
     if ($code >= 200 && $code < 300) {
-      $run = json_decode($resp, true);
+      $run   = json_decode($resp, true);
       $runId = $run['id'] ?? null;
 
       // 4) Poll until completion
@@ -109,7 +110,7 @@ if (!empty($_POST['message'])) {
         usleep(800000); // 0.8s
       }
 
-      // 5) Fetch latest assistant message
+      // 5) Fetch last assistant message
       if (!$error) {
         if ($status === 'completed') {
           [$mCode, $mResp, $mErr] = aoai_call('GET', "/openai/threads/{$_SESSION['thread_id']}/messages?order=desc&limit=1", null);
@@ -150,28 +151,49 @@ if (!empty($_POST['message'])) {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>SBM Chatbot</title>
+<title>SBM IT Support Chatbot</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   body{background:#0f0f10;color:#e8e8e8;font-family:system-ui,Arial;margin:0}
   .wrap{max-width:700px;margin:40px auto;padding:0 16px}
   .card{background:#1b1c1f;border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.4);padding:0 0 16px}
-  .hdr{background:#2a2c31;border-radius:14px 14px 0 0;padding:14px 18px;text-align:center;font-weight:700}
+  .hdr{background:#2a2c31;border-radius:14px 14px 0 0;padding:16px 20px;text-align:center;font-weight:700}
+
+  /* Brand header */
+  .brand{display:flex;align-items:center;justify-content:center;gap:14px}
+  .brand img{height:60px;width:auto;filter:drop-shadow(0 2px 6px rgba(0,0,0,.25))}
+  .brand-title{font-size:22px;font-weight:800;letter-spacing:.2px}
+
   .chat{padding:16px;display:flex;flex-direction:column;gap:10px;max-height:62vh;overflow:auto}
   .b{max-width:78%;padding:10px 12px;border-radius:12px;line-height:1.35;font-size:15px;white-space:pre-wrap}
   .me{margin-left:auto;background:#1e88e5;color:#fff;border-bottom-right-radius:4px}
   .bot{margin-right:auto;background:#2f3238;color:#d9e1f2;border-bottom-left-radius:4px}
   .err{background:#4a3426;color:#ffd7b1}
+
   form{display:flex;gap:8px;padding:0 16px 12px}
   input[type=text]{flex:1;padding:12px;border-radius:10px;border:1px solid #3a3d44;background:#111214;color:#e8e8e8}
   button{padding:12px 16px;border:0;border-radius:10px;background:#1e88e5;color:#fff;cursor:pointer}
+  .btn-secondary{background:#444}
+  button .icon{margin-left:6px}
+
   .sub{display:flex;justify-content:space-between;align-items:center;padding:0 18px 10px;color:#8b8e96;font-size:12px}
+
+  @media (max-width:480px){
+    .brand img{height:44px}
+    .brand-title{font-size:20px}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
-    <div class="hdr">SBM Chatbot</div>
+    <div class="hdr">
+      <div class="brand">
+        <img src="sbm_logo.png" alt="SBM Logo">
+        <span class="brand-title">SBM IT Support Chatbot</span>
+      </div>
+    </div>
+
     <div class="chat" id="chat">
       <?php foreach ($_SESSION['history'] as $m): ?>
         <div class="b <?= $m['role']==='user'?'me':'bot' ?>"><?= htmlspecialchars($m['content']) ?></div>
@@ -180,11 +202,15 @@ if (!empty($_POST['message'])) {
         <div class="b err"><?= $error ?></div>
       <?php endif; ?>
     </div>
+
     <form method="post">
       <input type="text" name="message" placeholder="Type your question..." autocomplete="off" required>
       <button type="submit">Send</button>
-      <button type="submit" name="reset" value="1" style="background:#444">Reset</button>
+      <button type="submit" name="reset" value="1" class="btn-secondary" aria-label="Reset conversation">
+        Reset <span class="icon" aria-hidden="true">🗑️</span>
+      </button>
     </form>
+
     <div class="sub">
       <div>Endpoint: <?= htmlspecialchars($AZURE_ENDPOINT) ?> • API: <?= htmlspecialchars($API_VERSION) ?></div>
       <div>Assistant: <?= htmlspecialchars(substr($ASSISTANT_ID,0,10)) ?>…</div>
@@ -194,6 +220,7 @@ if (!empty($_POST['message'])) {
 <script>document.getElementById('chat').scrollTop=9999999;</script>
 </body>
 </html>
+
 
 
 
