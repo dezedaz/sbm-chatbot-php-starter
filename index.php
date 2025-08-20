@@ -157,11 +157,11 @@ if (!empty($_POST['message'])) {
   body{background:#0f0f10;color:#e8e8e8;font-family:system-ui,Arial;margin:0}
   .wrap{max-width:700px;margin:40px auto;padding:0 16px}
   .card{background:#1b1c1f;border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.4);padding:0 0 16px}
-  .hdr{background:#2a2c31;border-radius:14px 14px 0 0;padding:16px 20px;text-align:center;font-weight:700}
+  .hdr{background:#2a2c31;border-radius:14px 14px 0 0;padding:24px 20px;text-align:center;font-weight:700}
 
   /* Brand header */
-  .brand{display:flex;align-items:center;justify-content:center;gap:14px}
-  .brand img{height:60px;width:auto;filter:drop-shadow(0 2px 6px rgba(0,0,0,.25))}
+  .brand{display:flex;align-items:center;justify-content:center;gap:16px}
+  .brand img{height:110px;width:auto;filter:drop-shadow(0 2px 6px rgba(0,0,0,.25))}
   .brand-title{font-size:22px;font-weight:800;letter-spacing:.2px}
 
   .chat{padding:16px;display:flex;flex-direction:column;gap:10px;max-height:62vh;overflow:auto}
@@ -179,7 +179,7 @@ if (!empty($_POST['message'])) {
   .sub{display:flex;justify-content:space-between;align-items:center;padding:0 18px 10px;color:#8b8e96;font-size:12px}
 
   @media (max-width:480px){
-    .brand img{height:44px}
+    .brand img{height:84px}
     .brand-title{font-size:20px}
   }
 </style>
@@ -220,6 +220,7 @@ if (!empty($_POST['message'])) {
 <script>document.getElementById('chat').scrollTop=9999999;</script>
 </body>
 </html>
+
 
 
 
