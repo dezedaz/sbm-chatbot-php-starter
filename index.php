@@ -14,7 +14,7 @@ if (!$AZURE_ENDPOINT || !$AZURE_API_KEY || !$ASSISTANT_ID) {
   exit;
 }
 
-/* --- Minimal HTTP helper --- */
+/* --- Minimal HTTP helper (kept exactly as your working version) --- */
 function aoai_call($method, $path, $body = null) {
   global $AZURE_ENDPOINT, $AZURE_API_KEY, $API_VERSION;
   $url = $AZURE_ENDPOINT . $path . (str_contains($path, '?') ? "&" : "?") . "api-version={$API_VERSION}";
@@ -60,7 +60,7 @@ $error = null;
 
 if (!empty($_POST['message'])) {
   $userMessage = trim($_POST['message']);
-  $_SESSION['history'][] = ['role' => 'user', 'content' => $userMessage];
+  $_SESSION['history'][] = ['role' => 'user', 'content' => $userMessage, 'ts' => time()];
 
   /* 1) Create thread if needed */
   if (!$_SESSION['thread_id']) {
@@ -130,7 +130,7 @@ if (!empty($_POST['message'])) {
                 if ($parts) $assistantText = implode("\n", $parts);
               }
             }
-            $_SESSION['history'][] = ['role' => 'assistant', 'content' => $assistantText];
+            $_SESSION['history'][] = ['role' => 'assistant', 'content' => $assistantText, 'ts' => time()];
           } else {
             $error = "MESSAGES error ($mCode): " . htmlspecialchars($mResp ?: $mErr);
           }
@@ -161,14 +161,22 @@ if (!empty($_POST['message'])) {
 
   /* Brand header */
   .brand{display:flex;align-items:center;justify-content:center;gap:16px}
-  .brand img{height:110px;width:auto;filter:drop-shadow(0 2px 6px rgba(0,0,0,.25))}
+  .brand img{height:140px;width:auto;filter:drop-shadow(0 2px 6px rgba(0,0,0,.25))}
   .brand-title{font-size:22px;font-weight:800;letter-spacing:.2px}
 
-  .chat{padding:16px;display:flex;flex-direction:column;gap:10px;max-height:62vh;overflow:auto}
+  .chat{padding:16px;display:flex;flex-direction:column;gap:12px;max-height:62vh;overflow:auto}
+
+  /* Message block */
+  .msg-wrap{display:flex;flex-direction:column;gap:6px}
+  .msg-wrap.me .ts{ text-align:right }
+  .msg-wrap.bot .ts{ text-align:left  }
+
   .b{max-width:78%;padding:10px 12px;border-radius:12px;line-height:1.35;font-size:15px;white-space:pre-wrap}
-  .me{margin-left:auto;background:#1e88e5;color:#fff;border-bottom-right-radius:4px}
-  .bot{margin-right:auto;background:#2f3238;color:#d9e1f2;border-bottom-left-radius:4px}
+  .me .b{margin-left:auto;background:#1e88e5;color:#fff;border-bottom-right-radius:4px}
+  .bot .b{margin-right:auto;background:#2f3238;color:#d9e1f2;border-bottom-left-radius:4px}
   .err{background:#4a3426;color:#ffd7b1}
+
+  .ts{font-size:12px;color:#9aa3af}
 
   form{display:flex;gap:8px;padding:0 16px 12px}
   input[type=text]{flex:1;padding:12px;border-radius:10px;border:1px solid #3a3d44;background:#111214;color:#e8e8e8}
@@ -177,11 +185,6 @@ if (!empty($_POST['message'])) {
   button .icon{margin-left:6px}
 
   .sub{display:flex;justify-content:space-between;align-items:center;padding:0 18px 10px;color:#8b8e96;font-size:12px}
-
-  @media (max-width:480px){
-    .brand img{height:84px}
-    .brand-title{font-size:20px}
-  }
 </style>
 </head>
 <body>
@@ -196,10 +199,17 @@ if (!empty($_POST['message'])) {
 
     <div class="chat" id="chat">
       <?php foreach ($_SESSION['history'] as $m): ?>
-        <div class="b <?= $m['role']==='user'?'me':'bot' ?>"><?= htmlspecialchars($m['content']) ?></div>
+        <?php $side = $m['role']==='user' ? 'me' : 'bot'; ?>
+        <div class="msg-wrap <?= $side ?>">
+          <div class="b"><?= htmlspecialchars($m['content']) ?></div>
+          <div class="ts" data-ts="<?= isset($m['ts']) ? (int)$m['ts'] : time() ?>"></div>
+        </div>
       <?php endforeach; ?>
       <?php if ($error): ?>
-        <div class="b err"><?= $error ?></div>
+        <div class="msg-wrap bot">
+          <div class="b err"><?= $error ?></div>
+          <div class="ts" data-ts="<?= time() ?>"></div>
+        </div>
       <?php endif; ?>
     </div>
 
@@ -217,9 +227,23 @@ if (!empty($_POST['message'])) {
     </div>
   </div>
 </div>
-<script>document.getElementById('chat').scrollTop=9999999;</script>
+
+<script>
+// Render local time under each bubble (HH:MM, user's timezone)
+document.querySelectorAll('.ts').forEach(el=>{
+  const ts = Number(el.getAttribute('data-ts')) * 1000;
+  if(!isNaN(ts)){
+    const d = new Date(ts);
+    el.textContent = d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  }
+});
+
+// Auto-scroll to bottom
+document.getElementById('chat').scrollTop = 9e9;
+</script>
 </body>
 </html>
+
 
 
 
