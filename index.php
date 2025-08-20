@@ -1,274 +1,206 @@
 <?php
-// --- SAME LOGIC AS BEFORE, UI STRINGS IN ENGLISH ONLY ---
 session_start();
 
-// Read environment
+/* --- Config from Render --- */
 $AZURE_ENDPOINT = rtrim(getenv('AZURE_ENDPOINT') ?: '', '/');
 $AZURE_API_KEY  = getenv('AZURE_API_KEY') ?: '';
 $ASSISTANT_ID   = getenv('ASSISTANT_ID') ?: '';
-$API_VERSION    = '2024-07-01-preview';
+$API_VERSION    = '2024-07-01-preview';  // Azure Assistants API version
 
-// Helper to call Azure OpenAI (Assistants API on Azure)
-function aoai_request(string $method, string $url, array $payload = null) {
-    global $AZURE_API_KEY;
-    $ch = curl_init($url);
-
-    $headers = [
-        'api-key: ' . $AZURE_API_KEY,
-        'Content-Type: application/json',
-        'Accept: application/json'
-    ];
-
-    $opts = [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER     => $headers,
-        CURLOPT_CUSTOMREQUEST  => $method,
-        CURLOPT_TIMEOUT        => 60,
-    ];
-
-    if ($payload !== null) {
-        $opts[CURLOPT_POSTFIELDS] = json_encode($payload);
-    }
-
-    curl_setopt_array($ch, $opts);
-    $resp = curl_exec($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $err = curl_error($ch);
-    curl_close($ch);
-
-    return [$status, $resp, $err];
+/* --- Sanity check --- */
+if (!$AZURE_ENDPOINT || !$AZURE_API_KEY || !$ASSISTANT_ID) {
+  http_response_code(500);
+  echo "<pre>Missing configuration. Please set AZURE_ENDPOINT, AZURE_API_KEY and ASSISTANT_ID in Render.</pre>";
+  exit;
 }
 
-// Basic guardrails for missing config
-$missing = [];
-if (!$AZURE_ENDPOINT) $missing[] = 'AZURE_ENDPOINT';
-if (!$AZURE_API_KEY)  $missing[] = 'AZURE_API_KEY';
-if (!$ASSISTANT_ID)   $missing[] = 'ASSISTANT_ID';
+/* --- Minimal HTTP helper (Azure Assistants path) --- */
+function aoai_call($method, $pathAfterVersion, $body = null) {
+  global $AZURE_ENDPOINT, $AZURE_API_KEY, $API_VERSION;
 
-// Reset thread if asked
-if (isset($_GET['reset'])) {
-    unset($_SESSION['thread_id']);
-    header('Location: /');
-    exit;
+  // Build URL like: {endpoint}/openai/assistants/{version}{pathAfterVersion}
+  $url = rtrim($AZURE_ENDPOINT, '/') . "/openai/assistants/{$API_VERSION}" . $pathAfterVersion;
+
+  $ch = curl_init($url);
+  $headers = [
+    "api-key: {$AZURE_API_KEY}",
+    "Content-Type: application/json",
+    "Accept: application/json"
+  ];
+  curl_setopt_array($ch, [
+    CURLOPT_CUSTOMREQUEST  => $method,
+    CURLOPT_HTTPHEADER     => $headers,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_TIMEOUT        => 60
+  ]);
+  if (!is_null($body)) {
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
+  }
+
+  $resp = curl_exec($ch);
+  $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+  $err  = curl_error($ch);
+  curl_close($ch);
+
+  return [$http, $resp, $err];
 }
 
-$errorBanner = '';
-$messagesToShow = [];
+/* --- Session bootstrap --- */
+if (!isset($_SESSION['history']))   $_SESSION['history'] = [];
+if (!isset($_SESSION['thread_id'])) $_SESSION['thread_id'] = null;
 
-// Handle send
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $userMessage = trim($_POST['message'] ?? '');
+/* --- Reset history & thread --- */
+if (isset($_POST['reset'])) {
+  $_SESSION['history'] = [];
+  $_SESSION['thread_id'] = null;
+  header("Location: " . strtok($_SERVER["REQUEST_URI"], '?'));
+  exit;
+}
 
-    if ($userMessage === '') {
-        $errorBanner = 'Please type a question.';
-    } elseif (!empty($missing)) {
-        $errorBanner = 'Missing configuration: ' . implode(', ', $missing) . '.';
+/* --- Send message --- */
+$error = null;
+if (!empty($_POST['message'])) {
+  $userMessage = trim($_POST['message']);
+  $_SESSION['history'][] = ['role' => 'user', 'content' => $userMessage];
+
+  /* 1) Create thread if missing */
+  if (!$_SESSION['thread_id']) {
+    // Empty JSON object for body
+    [$code, $resp, $err] = aoai_call('POST', "/threads", (object)[]);
+    if ($code >= 200 && $code < 300) {
+      $data = json_decode($resp, true);
+      $_SESSION['thread_id'] = $data['id'] ?? null;
+      if (!$_SESSION['thread_id']) {
+        $error = "THREAD error ($code): invalid response (missing id).";
+      }
     } else {
-        // Ensure thread exists in session
-        if (empty($_SESSION['thread_id'])) {
-            $createThreadUrl = "{$AZURE_ENDPOINT}/openai/assistants/{$API_VERSION}/threads";
-            [$st, $body, $err] = aoai_request('POST', $createThreadUrl, []);
-            if ($st >= 200 && $st < 300) {
-                $data = json_decode($body, true);
-                $_SESSION['thread_id'] = $data['id'] ?? null;
-            } else {
-                $errorBanner = "THREAD create error: HTTP {$st} — {$body}";
-            }
+      $error = "THREAD error ($code): " . htmlspecialchars($resp ?: $err);
+    }
+  }
+
+  /* 2) Add user message to thread */
+  if (!$error && $_SESSION['thread_id']) {
+    $msgBody = [
+      "role" => "user",
+      "content" => [
+        ["type" => "text", "text" => $userMessage]
+      ]
+    ];
+    [$code, $resp, $err] = aoai_call('POST', "/threads/{$_SESSION['thread_id']}/messages", $msgBody);
+    if (!($code >= 200 && $code < 300)) {
+      $error = "MESSAGE error ($code): " . htmlspecialchars($resp ?: $err);
+    }
+  }
+
+  /* 3) Start a run with your assistant */
+  if (!$error && $_SESSION['thread_id']) {
+    $runBody = ["assistant_id" => $ASSISTANT_ID];
+    [$code, $resp, $err] = aoai_call('POST', "/threads/{$_SESSION['thread_id']}/runs", $runBody);
+    if ($code >= 200 && $code < 300) {
+      $run = json_decode($resp, true);
+      $runId = $run['id'] ?? null;
+
+      // 4) Poll until completion (timeout ~60s)
+      $deadline = time() + 60;
+      $status = 'queued';
+      while (time() < $deadline) {
+        [$sCode, $sResp, $sErr] = aoai_call('GET', "/threads/{$_SESSION['thread_id']}/runs/{$runId}", null);
+        if (!($sCode >= 200 && $sCode < 300)) {
+          $error = "RUN status error ($sCode): " . htmlspecialchars($sResp ?: $sErr);
+          break;
         }
+        $s = json_decode($sResp, true);
+        $status = $s['status'] ?? 'unknown';
+        if (in_array($status, ['completed','failed','cancelled','expired'])) break;
+        usleep(800000); // 0.8s
+      }
 
-        // If we have a thread, add the user message, start a run, poll, then fetch messages
-        if (empty($errorBanner) && !empty($_SESSION['thread_id'])) {
-            $threadId = $_SESSION['thread_id'];
-
-            // 1) Add message to thread
-            $addMsgUrl = "{$AZURE_ENDPOINT}/openai/assistants/{$API_VERSION}/threads/{$threadId}/messages";
-            $payload = [
-                'role'    => 'user',
-                'content' => [
-                    ['type' => 'text', 'text' => $userMessage]
-                ],
-            ];
-            [$st, $body, $err] = aoai_request('POST', $addMsgUrl, $payload);
-            if (!($st >= 200 && $st < 300)) {
-                $errorBanner = "MESSAGE add error: HTTP {$st} — {$body}";
-            }
-
-            // 2) Create a run
-            if (empty($errorBanner)) {
-                $runUrl = "{$AZURE_ENDPOINT}/openai/assistants/{$API_VERSION}/threads/{$threadId}/runs";
-                $payload = ['assistant_id' => $ASSISTANT_ID];
-                [$st, $body, $err] = aoai_request('POST', $runUrl, $payload);
-                if ($st >= 200 && $st < 300) {
-                    $run = json_decode($body, true);
-                    $runId = $run['id'] ?? null;
-
-                    // 3) Poll run until completed (or terminal)
-                    if ($runId) {
-                        $getRunUrl = "{$AZURE_ENDPOINT}/openai/assistants/{$API_VERSION}/threads/{$threadId}/runs/{$runId}";
-                        $tries = 0;
-                        $status = $run['status'] ?? 'queued';
-                        while (!in_array($status, ['completed','failed','expired','cancelled','incomplete'], true) && $tries < 45) {
-                            usleep(800000); // 0.8s
-                            [$st2, $b2, $e2] = aoai_request('GET', $getRunUrl);
-                            if ($st2 >= 200 && $st2 < 300) {
-                                $r2 = json_decode($b2, true);
-                                $status = $r2['status'] ?? $status;
-                            } else {
-                                $errorBanner = "RUN poll error: HTTP {$st2} — {$b2}";
-                                break;
-                            }
-                            $tries++;
-                        }
-
-                        if (empty($errorBanner) && $status !== 'completed') {
-                            $errorBanner = "Run ended with status: {$status}.";
-                        }
-
-                        // 4) List last messages (latest first)
-                        if (empty($errorBanner)) {
-                            $listUrl = "{$AZURE_ENDPOINT}/openai/assistants/{$API_VERSION}/threads/{$threadId}/messages?order=desc&limit=6";
-                            [$st3, $b3, $e3] = aoai_request('GET', $listUrl);
-                            if ($st3 >= 200 && $st3 < 300) {
-                                $res = json_decode($b3, true);
-                                $messagesToShow = $res['data'] ?? [];
-                            } else {
-                                $errorBanner = "MESSAGES list error: HTTP {$st3} — {$b3}";
-                            }
-                        }
-                    } else {
-                        $errorBanner = 'Could not obtain run id.';
-                    }
-                } else {
-                    $errorBanner = "RUN create error: HTTP {$st} — {$body}";
+      // 5) Fetch latest assistant message
+      if (!$error) {
+        if ($status === 'completed') {
+          [$mCode, $mResp, $mErr] = aoai_call('GET', "/threads/{$_SESSION['thread_id']}/messages?order=desc&limit=1", null);
+          if ($mCode >= 200 && $mCode < 300) {
+            $messages = json_decode($mResp, true);
+            $items = $messages['data'] ?? [];
+            $assistantText = "(no response)";
+            if (!empty($items)) {
+              $assistantMsg = $items[0];
+              if (!empty($assistantMsg['content'])) {
+                $parts = [];
+                foreach ($assistantMsg['content'] as $c) {
+                  if (($c['type'] ?? '') === 'text' && isset($c['text']['value'])) {
+                    $parts[] = $c['text']['value'];
+                  }
                 }
+                if ($parts) $assistantText = implode("\n", $parts);
+              }
             }
+            $_SESSION['history'][] = ['role' => 'assistant', 'content' => $assistantText];
+          } else {
+            $error = "MESSAGES error ($mCode): " . htmlspecialchars($mResp ?: $mErr);
+          }
+        } else {
+          $error = "RUN finished with status: {$status}";
         }
+      }
+    } else {
+      $error = "RUN error ($code): " . htmlspecialchars($resp ?: $err);
     }
-}
+  }
 
-// If no fetch was just performed, but there is a thread, show recent history
-if (empty($messagesToShow) && !empty($_SESSION['thread_id']) && empty($errorBanner)) {
-    $threadId = $_SESSION['thread_id'];
-    $listUrl = "{$AZURE_ENDPOINT}/openai/assistants/{$API_VERSION}/threads/{$threadId}/messages?order=desc&limit=6";
-    [$st, $b, $e] = aoai_request('GET', $listUrl);
-    if ($st >= 200 && $st < 300) {
-        $res = json_decode($b, true);
-        $messagesToShow = $res['data'] ?? [];
-    }
-}
-
-// Helper to pretty print assistant/user messages
-function render_msg_bubble(array $msg) {
-    $role = $msg['role'] ?? 'assistant';
-    $text = '';
-    if (!empty($msg['content']) && is_array($msg['content'])) {
-        foreach ($msg['content'] as $c) {
-            if (($c['type'] ?? '') === 'text') {
-                $text .= $c['text']['value'] ?? '';
-            }
-        }
-    }
-    $time = '';
-    if (!empty($msg['created_at'])) {
-        $time = date('H:i', strtotime($msg['created_at']));
-    }
-    $cls = $role === 'user' ? 'bubble user' : 'bubble bot';
-    return "<div class=\"{$cls}\"><div class=\"msg\">".htmlspecialchars($text)."</div></div>";
+  header("Location: " . strtok($_SERVER["REQUEST_URI"], '?'));
+  exit;
 }
 ?>
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SBM Chatbot</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-    :root {
-        --bg:#0f172a;           /* slate-900 */
-        --panel:#111827;        /* gray-900 */
-        --card:#1f2937;         /* gray-800 */
-        --text:#e5e7eb;         /* gray-200 */
-        --muted:#9ca3af;        /* gray-400 */
-        --blue:#3b82f6;         /* blue-500 */
-        --blue-700:#1d4ed8;     /* blue-700 */
-        --danger:#b91c1c;       /* red-700 */
-    }
-    * { box-sizing: border-box; }
-    body {
-        margin:0; background:var(--bg); color:var(--text);
-        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
-        display:flex; min-height:100vh; align-items:center; justify-content:center;
-    }
-    .wrap { width:min(920px, 92vw); background:#0b1220; border-radius:14px; box-shadow: 0 10px 40px rgba(0,0,0,.35); }
-    .header { padding:22px 26px; background:var(--panel); border-radius:14px 14px 0 0; text-align:center; font-weight:700; letter-spacing:.3px; }
-    .content { padding:22px; }
-    .footnote { font-size:12px; color:var(--muted); display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
-    .footnote span { background: #0d1325; padding:6px 10px; border-radius:8px; }
-    .row { display:flex; gap:10px; }
-    .row input[type=text] {
-        flex:1; background:var(--card); color:var(--text);
-        border:1px solid #263043; border-radius:9px; padding:12px 14px; outline: none;
-    }
-    button {
-        background:var(--blue); color:white; border:0; padding:12px 16px; border-radius:9px; cursor:pointer;
-        font-weight:600;
-    }
-    button:hover { background:var(--blue-700); }
-    .reset { background:#374151; }
-    .reset:hover { background:#4b5563; }
-    .error {
-        background: #2a0f12; border:1px solid #7f1d1d; color:#fecaca;
-        padding:12px 14px; border-radius:10px; margin-bottom:12px; white-space:pre-wrap;
-    }
-    .history { display:flex; flex-direction:column; gap:10px; margin-bottom:12px; max-height:52vh; overflow:auto; }
-    .bubble { max-width:80%; padding:10px 12px; border-radius:12px; }
-    .bubble.user { margin-left:auto; background: #123262; }
-    .bubble.bot  { background: #1a2238; }
-    .muted { color:var(--muted); font-size:12px; margin-top:6px; }
+  body{background:#0f0f10;color:#e8e8e8;font-family:system-ui,Arial;margin:0}
+  .wrap{max-width:700px;margin:40px auto;padding:0 16px}
+  .card{background:#1b1c1f;border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.4);padding:0 0 16px}
+  .hdr{background:#2a2c31;border-radius:14px 14px 0 0;padding:14px 18px;text-align:center;font-weight:700}
+  .chat{padding:16px;display:flex;flex-direction:column;gap:10px;max-height:62vh;overflow:auto}
+  .b{max-width:78%;padding:10px 12px;border-radius:12px;line-height:1.35;font-size:15px;white-space:pre-wrap}
+  .me{margin-left:auto;background:#1e88e5;color:#fff;border-bottom-right-radius:4px}
+  .bot{margin-right:auto;background:#2f3238;color:#d9e1f2;border-bottom-left-radius:4px}
+  .err{background:#4a3426;color:#ffd7b1}
+  form{display:flex;gap:8px;padding:0 16px 12px}
+  input[type=text]{flex:1;padding:12px;border-radius:10px;border:1px solid #3a3d44;background:#111214;color:#e8e8e8}
+  button{padding:12px 16px;border:0;border-radius:10px;background:#1e88e5;color:#fff;cursor:pointer}
+  .sub{display:flex;justify-content:space-between;align-items:center;padding:0 18px 10px;color:#8b8e96;font-size:12px}
 </style>
 </head>
 <body>
 <div class="wrap">
-    <div class="header">SBM Chatbot</div>
-
-    <div class="content">
-        <?php if (!empty($missing)): ?>
-            <div class="error">
-                Missing configuration. Please set environment variables on Render:
-                AZURE_ENDPOINT, AZURE_API_KEY, ASSISTANT_ID.
-            </div>
-        <?php endif; ?>
-
-        <?php if ($errorBanner): ?>
-            <div class="error"><?= htmlspecialchars($errorBanner) ?></div>
-        <?php endif; ?>
-
-        <div class="history">
-            <?php
-            if (!empty($messagesToShow)) {
-                // API returns newest first; show oldest first
-                foreach (array_reverse($messagesToShow) as $m) {
-                    echo render_msg_bubble($m);
-                }
-            }
-            ?>
-        </div>
-
-        <form method="post" class="row" autocomplete="off">
-            <input type="text" name="message" placeholder="Type your question..." />
-            <button type="submit">Send</button>
-            <a class="reset" href="/?reset=1" style="text-decoration:none;padding:12px 16px;border-radius:9px;color:#fff;">Reset</a>
-        </form>
-
-        <div class="footnote">
-            <span>Endpoint: <?= htmlspecialchars($AZURE_ENDPOINT ?: 'not set') ?></span>
-            <span>API: <?= htmlspecialchars($API_VERSION) ?></span>
-            <span>Assistant: <?= htmlspecialchars($ASSISTANT_ID ? substr($ASSISTANT_ID, 0, 14) . '…' : 'not set') ?></span>
-        </div>
+  <div class="card">
+    <div class="hdr">SBM Chatbot</div>
+    <div class="chat" id="chat">
+      <?php foreach ($_SESSION['history'] as $m): ?>
+        <div class="b <?= $m['role']==='user'?'me':'bot' ?>"><?= htmlspecialchars($m['content']) ?></div>
+      <?php endforeach; ?>
+      <?php if ($error): ?>
+        <div class="b err"><?= $error ?></div>
+      <?php endif; ?>
     </div>
+    <form method="post">
+      <input type="text" name="message" placeholder="Type your question..." autocomplete="off" required>
+      <button type="submit">Send</button>
+      <button type="submit" name="reset" value="1" style="background:#444">Reset</button>
+    </form>
+    <div class="sub">
+      <div>Endpoint: <?= htmlspecialchars($AZURE_ENDPOINT) ?> • API: <?= htmlspecialchars($API_VERSION) ?></div>
+      <div>Assistant: <?= htmlspecialchars(substr($ASSISTANT_ID,0,10)) ?>…</div>
+    </div>
+  </div>
 </div>
+<script>document.getElementById('chat').scrollTop=9999999;</script>
 </body>
 </html>
+
 
 
 
