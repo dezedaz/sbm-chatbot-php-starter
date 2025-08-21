@@ -1,20 +1,20 @@
 <?php
 session_start();
 
-/* --- Config from Render --- */
+
 $AZURE_ENDPOINT = rtrim(getenv('AZURE_ENDPOINT') ?: '', '/');
 $AZURE_API_KEY  = getenv('AZURE_API_KEY') ?: '';
 $ASSISTANT_ID   = getenv('ASSISTANT_ID') ?: '';
-$API_VERSION    = '2024-07-01-preview';  // Azure Assistants API version
+$API_VERSION    = '2024-07-01-preview';  
 
-/* --- Safety check --- */
+
 if (!$AZURE_ENDPOINT || !$AZURE_API_KEY || !$ASSISTANT_ID) {
   http_response_code(500);
   echo "<pre>Missing configuration. Please set AZURE_ENDPOINT, AZURE_API_KEY and ASSISTANT_ID in Render.</pre>";
   exit;
 }
 
-/* --- Minimal HTTP helper (kept exactly as your working version) --- */
+
 function aoai_call($method, $path, $body = null) {
   global $AZURE_ENDPOINT, $AZURE_API_KEY, $API_VERSION;
   $url = $AZURE_ENDPOINT . $path . (str_contains($path, '?') ? "&" : "?") . "api-version={$API_VERSION}";
@@ -43,11 +43,11 @@ function aoai_call($method, $path, $body = null) {
   return [$http, $resp, $err];
 }
 
-/* --- Session init --- */
+
 if (!isset($_SESSION['history']))   $_SESSION['history']   = [];
 if (!isset($_SESSION['thread_id'])) $_SESSION['thread_id'] = null;
 
-/* --- Reset chat --- */
+
 if (isset($_POST['reset'])) {
   $_SESSION['history'] = [];
   $_SESSION['thread_id'] = null;
@@ -55,14 +55,14 @@ if (isset($_POST['reset'])) {
   exit;
 }
 
-/* --- Handle message --- */
+
 $error = null;
 
 if (!empty($_POST['message'])) {
   $userMessage = trim($_POST['message']);
   $_SESSION['history'][] = ['role' => 'user', 'content' => $userMessage, 'ts' => time()];
 
-  /* 1) Create thread if needed */
+
   if (!$_SESSION['thread_id']) {
     [$code, $resp, $err] = aoai_call('POST', "/openai/threads", []); // empty body is fine
     if ($code >= 200 && $code < 300) {
@@ -73,7 +73,7 @@ if (!empty($_POST['message'])) {
     }
   }
 
-  /* 2) Add user message to thread */
+ 
   if (!$error && $_SESSION['thread_id']) {
     $msgBody = [
       "role"    => "user",
@@ -87,7 +87,7 @@ if (!empty($_POST['message'])) {
     }
   }
 
-  /* 3) Run the assistant */
+
   if (!$error && $_SESSION['thread_id']) {
     $runBody = ["assistant_id" => $ASSISTANT_ID];
     [$code, $resp, $err] = aoai_call('POST', "/openai/threads/{$_SESSION['thread_id']}/runs", $runBody);
@@ -95,7 +95,7 @@ if (!empty($_POST['message'])) {
       $run   = json_decode($resp, true);
       $runId = $run['id'] ?? null;
 
-      // 4) Poll until completion
+     
       $deadline = time() + 60;
       $status = 'queued';
       while (time() < $deadline) {
@@ -107,10 +107,10 @@ if (!empty($_POST['message'])) {
         $s = json_decode($sResp, true);
         $status = $s['status'] ?? 'unknown';
         if (in_array($status, ['completed','failed','cancelled','expired'])) break;
-        usleep(800000); // 0.8s
+        usleep(800000); 
       }
 
-      // 5) Fetch last assistant message
+      
       if (!$error) {
         if ($status === 'completed') {
           [$mCode, $mResp, $mErr] = aoai_call('GET', "/openai/threads/{$_SESSION['thread_id']}/messages?order=desc&limit=1", null);
@@ -159,14 +159,14 @@ if (!empty($_POST['message'])) {
   .card{background:#1b1c1f;border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.4);padding:0 0 16px}
   .hdr{background:#2a2c31;border-radius:14px 14px 0 0;padding:24px 20px;text-align:center;font-weight:700}
 
-  /* Brand header */
+ 
   .brand{display:flex;align-items:center;justify-content:center;gap:16px}
   .brand img{height:140px;width:auto;filter:drop-shadow(0 2px 6px rgba(0,0,0,.25))}
   .brand-title{font-size:22px;font-weight:800;letter-spacing:.2px}
 
   .chat{padding:16px;display:flex;flex-direction:column;gap:12px;max-height:62vh;overflow:auto}
 
-  /* Message block */
+  
   .msg-wrap{display:flex;flex-direction:column;gap:6px}
   .msg-wrap.me .ts{ text-align:right }
   .msg-wrap.bot .ts{ text-align:left  }
@@ -229,7 +229,7 @@ if (!empty($_POST['message'])) {
 </div>
 
 <script>
-// Render local time under each bubble (HH:MM, user's timezone)
+
 document.querySelectorAll('.ts').forEach(el=>{
   const ts = Number(el.getAttribute('data-ts')) * 1000;
   if(!isNaN(ts)){
@@ -238,7 +238,7 @@ document.querySelectorAll('.ts').forEach(el=>{
   }
 });
 
-// Auto-scroll to bottom
+
 document.getElementById('chat').scrollTop = 9e9;
 </script>
 </body>
